@@ -62,7 +62,9 @@ interface CircuitBreakerConfig {
 }
 
 interface ServiceConfig {
-  baseUrl: string;
+  baseUrl?: string; // URL única do serviço (ou use baseUrls para múltiplas)
+  baseUrls?: string[]; // Array de URLs para load balancing
+  loadBalancer?: 'round-robin' | 'random' | 'least-connections'; // Estratégia de balanceamento (default: round-robin)
   jwt_secret?: string; // Secret específico do serviço
   jwt_enabled?: boolean; // Se JWT está habilitado por padrão para todas as rotas do serviço
   timeout?: number; // Timeout em milissegundos para requisições ao serviço
@@ -74,6 +76,9 @@ export class Gateway {
   private config: GatewayConfig = {};
   private axiosInstances: Record<string, AxiosInstance> = {};
   private circuitBreakers: Record<string, CircuitBreaker> = {};
+  // Load balancer state
+  private roundRobinCounters: Record<string, number> = {};
+  private connectionCounts: Record<string, Record<number, number>> = {};
 
   constructor(private app: Application) {}
 
@@ -188,8 +193,14 @@ export class Gateway {
 
     // Função que será protegida pelo circuit breaker
     const makeRequest = async (requestConfig: any) => {
-      const axiosInstance = this.getAxiosInstance(serviceName);
-      return await axiosInstance.request(requestConfig);
+      // Se o requestConfig tem baseUrl (passado pelo proxy), usa ela
+      const baseUrl = requestConfig.baseUrl;
+      const axiosInstance = this.getAxiosInstance(serviceName, baseUrl);
+      
+      // Remove baseUrl do requestConfig para não interferir com axios
+      const { baseUrl: _, ...cleanConfig } = requestConfig;
+      
+      return await axiosInstance.request(cleanConfig);
     };
 
     const breaker = new CircuitBreaker(makeRequest, options);
@@ -213,6 +224,123 @@ export class Gateway {
 
     this.circuitBreakers[serviceName] = breaker;
     console.log(`⚡ Circuit Breaker inicializado para serviço: ${serviceName}`, options);
+  }
+
+  // ⚖️ Seleciona URL baseada na estratégia de load balancing
+  private selectBaseUrl(serviceName: string, serviceConfig: ServiceConfig): string {
+    // Se só tem baseUrl, retorna direto
+    if (serviceConfig.baseUrl && !serviceConfig.baseUrls) {
+      return serviceConfig.baseUrl;
+    }
+
+    // Se tem baseUrls, usa load balancing
+    const urls = serviceConfig.baseUrls || [];
+    if (urls.length === 0) {
+      throw new Error(`Service "${serviceName}" must have either baseUrl or baseUrls defined`);
+    }
+
+    // Se só tem uma URL, retorna direto
+    if (urls.length === 1) {
+      return urls[0]!;
+    }
+
+    const strategy = serviceConfig.loadBalancer || 'round-robin';
+
+    switch (strategy) {
+      case 'round-robin':
+        return this.roundRobinSelect(serviceName, urls);
+      
+      case 'random':
+        return this.randomSelect(urls);
+      
+      case 'least-connections':
+        return this.leastConnectionsSelect(serviceName, urls);
+      
+      default:
+        return this.roundRobinSelect(serviceName, urls);
+    }
+  }
+
+  // 🔄 Round Robin: distribui requisições de forma circular
+  private roundRobinSelect(serviceName: string, urls: string[]): string {
+    if (!this.roundRobinCounters[serviceName]) {
+      this.roundRobinCounters[serviceName] = 0;
+    }
+
+    const index = this.roundRobinCounters[serviceName] % urls.length;
+    this.roundRobinCounters[serviceName]++;
+    
+    const selectedUrl = urls[index]!;
+    console.log(`🔄 Load Balancer (Round Robin): ${serviceName} → ${selectedUrl} [${index + 1}/${urls.length}]`);
+    
+    return selectedUrl;
+  }
+
+  // 🎲 Random: seleciona URL aleatoriamente
+  private randomSelect(urls: string[]): string {
+    const index = Math.floor(Math.random() * urls.length);
+    const selectedUrl = urls[index]!;
+    console.log(`🎲 Load Balancer (Random): ${selectedUrl} [${index + 1}/${urls.length}]`);
+    return selectedUrl;
+  }
+
+  // 📊 Least Connections: seleciona servidor com menos conexões ativas
+  private leastConnectionsSelect(serviceName: string, urls: string[]): string {
+    if (!this.connectionCounts[serviceName]) {
+      this.connectionCounts[serviceName] = {};
+    }
+    
+    const counts = this.connectionCounts[serviceName];
+    urls.forEach((_, index) => {
+      if (counts[index] === undefined) {
+        counts[index] = 0;
+      }
+    });
+
+    // Encontra o índice com menos conexões
+    let minIndex = 0;
+    let minConnections = this.connectionCounts[serviceName][0] || 0;
+
+    for (let i = 1; i < urls.length; i++) {
+      const connections = this.connectionCounts[serviceName][i] || 0;
+      if (connections < minConnections) {
+        minConnections = connections;
+        minIndex = i;
+      }
+    }
+
+    const selectedUrl = urls[minIndex]!;
+    console.log(`📊 Load Balancer (Least Connections): ${serviceName} → ${selectedUrl} [${minConnections} conexões ativas]`);
+    
+    return selectedUrl;
+  }
+
+  // 📈 Incrementa contador de conexões
+  private incrementConnections(serviceName: string, url: string): void {
+    const serviceConfig = this.services[serviceName];
+    if (!serviceConfig || !serviceConfig.baseUrls) return;
+
+    const index = serviceConfig.baseUrls.indexOf(url);
+    if (index !== -1) {
+      if (!this.connectionCounts[serviceName]) {
+        this.connectionCounts[serviceName] = {};
+      }
+      this.connectionCounts[serviceName][index] = (this.connectionCounts[serviceName][index] || 0) + 1;
+    }
+  }
+
+  // 📉 Decrementa contador de conexões
+  private decrementConnections(serviceName: string, url: string): void {
+    const serviceConfig = this.services[serviceName];
+    if (!serviceConfig || !serviceConfig.baseUrls) return;
+
+    const index = serviceConfig.baseUrls.indexOf(url);
+    if (index !== -1) {
+      if (!this.connectionCounts[serviceName]) {
+        this.connectionCounts[serviceName] = {};
+      }
+      this.connectionCounts[serviceName][index] = Math.max(0, (this.connectionCounts[serviceName][index] || 0) - 1);
+    }
   }
 
   // 🔒 Aplica segurança global do gateway
@@ -389,20 +517,27 @@ export class Gateway {
   }
 
   // Obtém ou cria uma instância axios otimizada para o serviço
-  private getAxiosInstance(serviceName: string): AxiosInstance {
-    // Se já existe, retorna a instância cacheada
-    if (this.axiosInstances[serviceName]) {
-      return this.axiosInstances[serviceName];
-    }
-
+  private getAxiosInstance(serviceName: string, baseUrl?: string): AxiosInstance {
     const service = this.services[serviceName];
     if (!service) {
       throw new Error(`Service "${serviceName}" not defined`);
     }
 
+    // Se tem load balancing (múltiplas URLs), não cacheia a instância
+    // pois cada requisição pode ir para um servidor diferente
+    const hasLoadBalancing = service.baseUrls && service.baseUrls.length > 1;
+    
+    // Se já existe e não tem load balancing, retorna a instância cacheada
+    if (!hasLoadBalancing && this.axiosInstances[serviceName]) {
+      return this.axiosInstances[serviceName];
+    }
+
+    // Determina a baseURL a ser usada
+    const effectiveBaseUrl = baseUrl || this.selectBaseUrl(serviceName, service);
+
     // Cria instância otimizada para o serviço
     const instance = axios.create({
-      baseURL: service.baseUrl,
+      baseURL: effectiveBaseUrl,
       timeout: service.timeout || 30000,
       httpAgent,
       httpsAgent,
@@ -444,8 +579,11 @@ export class Gateway {
       );
     }
 
-    // Cacheia a instância
-    this.axiosInstances[serviceName] = instance;
+    // Cacheia a instância apenas se não tiver load balancing
+    if (!hasLoadBalancing) {
+      this.axiosInstances[serviceName] = instance;
+    }
+    
     return instance;
   }
 
@@ -507,7 +645,9 @@ export class Gateway {
           }
         }
 
-        const url = `${service.baseUrl}${upstreamPath}`;
+        // Seleciona a URL baseada na estratégia de load balancing
+        const selectedBaseUrl = this.selectBaseUrl(serviceName, service);
+        const url = `${selectedBaseUrl}${upstreamPath}`;
         const method = req.method.toLowerCase();
 
         console.log(`🔄 Proxying: ${method.toUpperCase()} ${req.originalUrl} → ${url}`);
@@ -551,28 +691,38 @@ export class Gateway {
           data: req.body,
           params: req.query,
           headers,
+          baseUrl: selectedBaseUrl, // Passa a baseUrl selecionada para o circuit breaker
         };
 
-        // Usa circuit breaker se estiver habilitado para este serviço
-        let result: any;
-        const circuitBreaker = this.circuitBreakers[serviceName];
-        
-        if (circuitBreaker) {
-          console.log(`⚡ Usando Circuit Breaker para: ${serviceName}`);
-          result = await circuitBreaker.fire(requestConfig);
-        } else {
-          // Usa instância axios normal sem circuit breaker
-          const axiosInstance = this.getAxiosInstance(serviceName);
-          result = await axiosInstance(requestConfig);
-        }
-        if (result.status >= 200 && result.status < 300) {
-          console.log(`✅ Proxy success: ${result.status}`);
-        } else {
-          console.error(`❌ Proxy error: ${result.status}`);
-        }
+        // Incrementa contador de conexões (para least-connections)
+        this.incrementConnections(serviceName, selectedBaseUrl);
 
-        //const message = responseMap?.message || 'Success';
-        res.status(result.status || 200).json(result.data);
+        try {
+          // Usa circuit breaker se estiver habilitado para este serviço
+          let result: any;
+          const circuitBreaker = this.circuitBreakers[serviceName];
+          
+          if (circuitBreaker) {
+            console.log(`⚡ Usando Circuit Breaker para: ${serviceName}`);
+            result = await circuitBreaker.fire(requestConfig);
+          } else {
+            // Usa instância axios normal sem circuit breaker
+            const axiosInstance = this.getAxiosInstance(serviceName, selectedBaseUrl);
+            result = await axiosInstance(requestConfig);
+          }
+          
+          if (result.status >= 200 && result.status < 300) {
+            console.log(`✅ Proxy success: ${result.status}`);
+          } else {
+            console.error(`❌ Proxy error: ${result.status}`);
+          }
+
+          //const message = responseMap?.message || 'Success';
+          res.status(result.status || 200).json(result.data);
+        } finally {
+          // Decrementa contador de conexões
+          this.decrementConnections(serviceName, selectedBaseUrl);
+        }
       } catch (err: any) {
         console.error(`❌ Proxy error:`, {
           message: err.message,

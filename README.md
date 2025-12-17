@@ -21,6 +21,7 @@ API Gateway moderno e robusto construído com Express.js e TypeScript, oferecend
 
 ### ⚡ Performance & Resiliência
 
+- **Load Balancer**: Distribuição inteligente entre múltiplos servidores (Round Robin, Random, Least Connections)
 - **Circuit Breaker**: Proteção contra cascatas de falhas
 - **Connection Pooling**: HTTP Keep-Alive otimizado
 - **Instâncias Axios Cacheadas**: Zero overhead de criação
@@ -141,6 +142,7 @@ routes:
 
 ### Principais Guias
 
+- **[Load Balancer](docs/LOAD_BALANCER.md)**: Distribuição de carga entre múltiplos servidores
 - **[Circuit Breaker](docs/CIRCUIT_BREAKER.md)**: Implementação e configuração do Circuit Breaker
 - **[Performance](docs/PERFORMANCE.md)**: Otimizações e melhores práticas
 - **[Rotas - Exemplo Completo](docs/routes.example.yaml)**: Exemplos de configuração
@@ -148,7 +150,28 @@ routes:
 
 ### Funcionalidades Detalhadas
 
-#### 1. Circuit Breaker
+#### 1. Load Balancer
+
+Distribua carga entre múltiplos servidores:
+
+```yaml
+services:
+  api-service:
+    baseUrls:  # Use baseUrls (plural) em vez de baseUrl
+      - http://server-1:3000
+      - http://server-2:3000
+      - http://server-3:3000
+    loadBalancer: round-robin  # Opções: round-robin, random, least-connections
+```
+
+**Estratégias:**
+- 🔄 **Round Robin**: Distribui em ordem circular (recomendado)
+- 🎲 **Random**: Seleciona aleatoriamente
+- 📊 **Least Connections**: Escolhe servidor com menos conexões ativas
+
+[Leia mais sobre Load Balancer](docs/LOAD_BALANCER.md)
+
+#### 2. Circuit Breaker
 
 Proteja seus serviços de cascatas de falhas:
 
@@ -169,7 +192,7 @@ Estados:
 
 [Leia mais sobre Circuit Breaker](docs/CIRCUIT_BREAKER.md)
 
-#### 2. JWT Authentication
+#### 3. JWT Authentication
 
 Autenticação flexível em 3 níveis:
 
@@ -188,7 +211,7 @@ routes:
     jwt_enabled: true
 ```
 
-#### 3. Logging com Redação de Dados Sensíveis
+#### 4. Logging com Redação de Dados Sensíveis
 
 Logs detalhados com proteção automática:
 
@@ -203,7 +226,7 @@ Logs detalhados com proteção automática:
 
 Configure campos adicionais em `src/config/sensitive-fields.ts`.
 
-#### 4. Roteamento Avançado
+#### 5. Roteamento Avançado
 
 **Wildcards:**
 ```yaml

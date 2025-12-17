@@ -117,7 +117,49 @@ services:
 
 📚 [Documentação Completa do Circuit Breaker](./CIRCUIT_BREAKER.md)
 
-### 7. **Timeouts Configuráveis**
+### 7. **Load Balancer para Alta Disponibilidade**
+
+Distribui carga entre múltiplos servidores automaticamente:
+
+```yaml
+services:
+  api-service:
+    baseUrls:  # Array de URLs em vez de baseUrl única
+      - http://api-server-1:3000
+      - http://api-server-2:3000
+      - http://api-server-3:3000
+    loadBalancer: round-robin  # Estratégia de distribuição
+```
+
+**Estratégias Disponíveis:**
+- 🔄 **Round Robin**: Distribui requisições em ordem circular (recomendado)
+- 🎲 **Random**: Seleciona servidor aleatoriamente
+- 📊 **Least Connections**: Escolhe servidor com menos conexões ativas
+
+**Benefícios:**
+- ✅ Alta disponibilidade: se um servidor falhar, outros continuam
+- ✅ Escalabilidade horizontal: adicione servidores para aumentar capacidade
+- ✅ Distribuição inteligente de carga
+- ✅ Zero downtime: deploy sem interrupção
+- ✅ Combina perfeitamente com Circuit Breaker
+
+**Exemplo com Circuit Breaker:**
+```yaml
+services:
+  production-api:
+    baseUrls:
+      - http://api-1:3000
+      - http://api-2:3000
+      - http://api-3:3000
+    loadBalancer: round-robin
+    circuit_breaker:
+      enabled: true
+      errorThresholdPercentage: 40
+```
+
+📚 [Documentação Completa do Load Balancer](./LOAD_BALANCER.md)
+
+### 9. **Timeouts Configuráveis**
 
 ```yaml
 services:
@@ -133,7 +175,7 @@ services:
 - ✅ Libera recursos rapidamente
 - ✅ Controle fino por serviço
 
-### 8. **Headers Otimizados**
+### 10. **Headers Otimizados**
 
 Apenas headers necessários são copiados:
 
@@ -222,7 +264,19 @@ npm run dev
 ⚡ POST /api/orders - 201 (123ms)
 ```
 
-### 5. Habilite Circuit Breaker para Serviços Críticos
+### 5. Use Load Balancer para Alta Disponibilidade
+
+```yaml
+services:
+  critical-service:
+    baseUrls:  # Múltiplos servidores para redundância
+      - http://server-1:3000
+      - http://server-2:3000
+      - http://server-3:3000
+    loadBalancer: round-robin
+```
+
+### 6. Habilite Circuit Breaker para Serviços Críticos
 
 ```yaml
 services:
@@ -235,7 +289,25 @@ services:
       resetTimeout: 15000            # Recuperação rápida
 ```
 
-### 6. Configure Connection Pool
+### 7. Combine Load Balancer + Circuit Breaker
+
+Para máxima resiliência:
+
+```yaml
+services:
+  resilient-service:
+    baseUrls:
+      - http://server-1:3000
+      - http://server-2:3000
+      - http://server-3:3000
+    loadBalancer: round-robin
+    circuit_breaker:
+      enabled: true
+      errorThresholdPercentage: 40
+      resetTimeout: 20000
+```
+
+### 8. Configure Connection Pool
 
 Para cargas muito altas, ajuste os agentes HTTP:
 

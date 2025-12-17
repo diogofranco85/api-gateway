@@ -10,7 +10,9 @@ gateway:
 
 services:
   store-service:
-    baseUrl: http://localhost:3333
+    baseUrls: 
+      - http://localhost:3333
+      - http://localhost:3333
     jwt_enabled: false # Habilita JWT para TODAS as rotas deste serviço por padrão
     jwt_secret: "secret-local" # Secret específico (opcional, usa o global se não definido)
     timeout: 10000 # Timeout de 10 segundos (padrão: 30000ms = 30s)
@@ -34,16 +36,16 @@ routes:
     methods: GET
     service: store-service
     target: /settings/key/:key
-    middlewares: [loggerMiddleware]
+    # middlewares: [loggerMiddleware]
 
   - path: /settings/key/:key/public
     methods: GET
     service: store-service
     target: /settings/key/:key/public
-    middlewares: [loggerMiddleware]
+    # middlewares: [loggerMiddleware]
 
   - path: /settings
     methods: POST
     service: store-service
     target: /settings
-    middlewares: [loggerMiddleware]
+   # middlewares: [loggerMiddleware]

@@ -39,6 +39,22 @@ services:
     timeout: 60000 # Timeout de 1 minuto para requisições longas
     # circuit_breaker não definido = desabilitado
 
+  # Exemplo de Load Balancing com múltiplas URLs
+  api-service:
+    # Usa baseUrls em vez de baseUrl para load balancing
+    baseUrls:
+      - http://api-server-1:3000
+      - http://api-server-2:3000
+      - http://api-server-3:3000
+    loadBalancer: round-robin # Opções: round-robin (padrão), random, least-connections
+    timeout: 10000
+    circuit_breaker:
+      enabled: true
+      timeout: 8000
+      errorThresholdPercentage: 40
+      resetTimeout: 25000
+      volumeThreshold: 8
+
 routes:
   # Rota pública - JWT desabilitado (service não tem jwt_enabled)
   - path: /auth/sign-in
