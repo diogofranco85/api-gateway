@@ -1,0 +1,47 @@
+gateway:
+  cors:
+    origins: ["https://api-hml.frani.com.br"]
+    methods: ["GET", "POST", "PUT", "PATCH","DELETE", "OPTIONS"]
+    credentials: true
+  security:
+    enforceHttps: true
+    helmet: true
+    sanitizePayload: true
+
+services:
+  store-service:
+    baseUrl: http://store_catalog_backend-hml.railway.internal:8080
+
+routes:
+  - path: /store/*
+    methods: any
+    service: store-service
+    middlewares: [loggerMiddleware]
+
+  - path: /auth/sign-in
+    methods: POST
+    service: store-service
+    target: /sessions
+
+  - path: /auth/refresh
+    methods: POST
+    service: store-service
+    target: /sessions/refresh-token
+
+  - path: /settings/key/:key
+    methods: GET
+    service: store-service
+    target: /settings/key/:key
+    middlewares: [loggerMiddleware]
+
+  - path: /settings/key/:key/public
+    methods: GET
+    service: store-service
+    target: /settings/key/:key/public
+    middlewares: [loggerMiddleware]
+
+  - path: /settings
+    methods: POST
+    service: store-service
+    target: /settings
+    middlewares: [loggerMiddleware]

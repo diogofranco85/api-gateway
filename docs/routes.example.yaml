@@ -1,0 +1,72 @@
+gateway:
+  cors:
+    origins: ["http://localhost.com", "https://api-hml.frani.com.br"]
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    credentials: true
+  security:
+    enforceHttps: false
+    helmet: true
+    sanitizePayload: true
+  jwt_secret: "seu-secret-global-muito-secreto-aqui" # Secret global (fallback)
+
+services:
+  store-service:
+    baseUrl: http://localhost:3333
+    jwt_enabled: true # Habilita JWT para TODAS as rotas deste serviço por padrão
+    jwt_secret: "secret-especifico-do-store-service" # Secret específico (opcional, usa o global se não definido)
+
+  auth-service:
+    baseUrl: http://localhost:4000
+    # jwt_enabled não definido = JWT desabilitado por padrão
+
+  public-service:
+    baseUrl: http://localhost:5000
+    jwt_enabled: false # Explicitamente desabilitado
+
+routes:
+  # Rota pública - JWT desabilitado (service não tem jwt_enabled)
+  - path: /auth/sign-in
+    methods: POST
+    service: auth-service
+    target: /sessions
+
+  # Rota pública - JWT explicitamente desabilitado
+  - path: /auth/refresh
+    methods: POST
+    service: auth-service
+    target: /sessions/refresh-token
+    jwt_disabled: true # Desabilita JWT mesmo se o serviço tiver jwt_enabled
+
+  # Rotas do store - JWT habilitado por padrão (service tem jwt_enabled: true)
+  - path: /store/*
+    methods: any
+    service: store-service
+    middlewares: [loggerMiddleware]
+    # JWT será aplicado automaticamente porque store-service tem jwt_enabled: true
+
+  # Rota específica do store - JWT explicitamente desabilitado
+  - path: /store/public/catalog
+    methods: GET
+    service: store-service
+    jwt_disabled: true # Desabilita JWT apenas para esta rota
+
+  # Rota com JWT forçado, mesmo que o serviço não tenha jwt_enabled
+  - path: /public/profile
+    methods: GET
+    service: public-service
+    jwt_enabled: true # Força JWT mesmo que o serviço não tenha jwt_enabled
+    jwt_secret: "secret-especifico-desta-rota" # Pode ter secret próprio (opcional)
+
+  # Rota com JWT usando secret do serviço
+  - path: /orders
+    methods: [GET, POST]
+    service: store-service
+    # Usa jwt_secret do store-service (ou global se não definido)
+
+  # Rota com JWT usando secret global
+  - path: /admin/*
+    methods: any
+    service: store-service
+    jwt_enabled: true
+    # Usa jwt_secret global do gateway
+

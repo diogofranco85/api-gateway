@@ -1,0 +1,30 @@
+gateway:
+  cors:
+    origins: ["http://localhost.com", "https://api-hml.frani.com.br"]
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    credentials: true
+  security:
+    enforceHttps: false
+    helmet: true
+    sanitizePayload: true
+
+services:
+  store-service:
+    baseUrl: http://localhost:3333
+
+routes:
+  - path: /store/*
+    methods: any
+    service: store-service
+    middlewares: [loggerMiddleware]
+
+  - path: /auth/sign-in
+    methods: POST
+    service: store-service
+    target: /sessions
+
+  - path: /auth/refresh
+    methods: POST
+    service: store-service
+    target: /sessions/refresh-token
+    
