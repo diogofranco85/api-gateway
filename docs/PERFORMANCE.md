@@ -133,7 +133,7 @@ services:
 - ✅ Libera recursos rapidamente
 - ✅ Controle fino por serviço
 
-### 7. **Headers Otimizados**
+### 8. **Headers Otimizados**
 
 Apenas headers necessários são copiados:
 
@@ -222,7 +222,20 @@ npm run dev
 ⚡ POST /api/orders - 201 (123ms)
 ```
 
-### 5. Configure Connection Pool
+### 5. Habilite Circuit Breaker para Serviços Críticos
+
+```yaml
+services:
+  payment-service:
+    baseUrl: http://payments:3000
+    circuit_breaker:
+      enabled: true
+      timeout: 5000                  # Resposta rápida
+      errorThresholdPercentage: 30   # Baixa tolerância
+      resetTimeout: 15000            # Recuperação rápida
+```
+
+### 6. Configure Connection Pool
 
 Para cargas muito altas, ajuste os agentes HTTP:
 
