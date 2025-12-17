@@ -15,16 +15,29 @@ services:
     jwt_enabled: true # Habilita JWT para TODAS as rotas deste serviço por padrão
     jwt_secret: "secret-especifico-do-store-service" # Secret específico (opcional, usa o global se não definido)
     timeout: 15000 # Timeout de 15 segundos (padrão: 30000ms = 30s)
+    circuit_breaker:
+      enabled: true # Habilita circuit breaker para este serviço
+      timeout: 10000 # Timeout para circuit breaker (10s)
+      errorThresholdPercentage: 50 # Abre o circuito se 50% das requisições falharem
+      resetTimeout: 30000 # Tenta fechar o circuito após 30s
+      volumeThreshold: 10 # Mínimo de 10 requisições antes de avaliar
 
   auth-service:
     baseUrl: http://localhost:4000
     timeout: 5000 # Timeout de 5 segundos para autenticação
     # jwt_enabled não definido = JWT desabilitado por padrão
+    circuit_breaker:
+      enabled: true
+      timeout: 5000
+      errorThresholdPercentage: 60
+      resetTimeout: 20000
+      volumeThreshold: 5
 
   public-service:
     baseUrl: http://localhost:5000
     jwt_enabled: false # Explicitamente desabilitado
     timeout: 60000 # Timeout de 1 minuto para requisições longas
+    # circuit_breaker não definido = desabilitado
 
 routes:
   # Rota pública - JWT desabilitado (service não tem jwt_enabled)

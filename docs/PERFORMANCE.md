@@ -81,7 +81,43 @@ Em desenvolvimento, mede tempo de cada requisição:
 - ✅ Monitora performance em tempo real
 - ✅ Zero overhead em produção
 
-### 6. **Timeouts Configuráveis**
+### 6. **Circuit Breaker para Resiliência**
+
+O padrão Circuit Breaker protege o sistema de cascatas de falhas:
+
+```yaml
+services:
+  external-api:
+    baseUrl: http://api.external.com
+    circuit_breaker:
+      enabled: true
+      timeout: 10000                  # 10 segundos
+      errorThresholdPercentage: 50    # Abre com 50% de erros
+      resetTimeout: 30000             # Tenta fechar após 30s
+      volumeThreshold: 10             # Avalia após 10 requisições
+```
+
+**Estados do Circuit Breaker:**
+- 🟢 **FECHADO**: Operação normal
+- 🔴 **ABERTO**: Bloqueia requisições, retorna 503 imediatamente
+- 🟡 **MEIO-ABERTO**: Testa recuperação do serviço
+
+**Benefícios:**
+- ✅ Evita sobrecarga em serviços instáveis
+- ✅ Fail-fast: retorna erro imediatamente quando aberto
+- ✅ Recuperação automática
+- ✅ Protege recursos do gateway
+- ✅ Reduz latência em cenários de falha
+
+**Quando Usar:**
+- APIs externas ou de terceiros
+- Microserviços com histórico de instabilidade
+- Serviços críticos que precisam de isolamento
+- Ambientes com alta carga
+
+📚 [Documentação Completa do Circuit Breaker](./CIRCUIT_BREAKER.md)
+
+### 7. **Timeouts Configuráveis**
 
 ```yaml
 services:

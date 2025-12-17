@@ -10,6 +10,7 @@ import express, { Application, Request, Response, RequestHandler, NextFunction }
 import path from 'path';
 import { ZodSchema, ZodError } from 'zod';
 import { createJWTMiddleware } from './middlewares/jwtMiddleware';
+import CircuitBreaker from 'opossum';
 
 // Cria agentes HTTP/HTTPS otimizados com connection pooling e keepAlive
 const httpAgent = new http.Agent({
@@ -52,17 +53,27 @@ interface GatewayConfig {
   jwt_secret?: string; // Secret global do gateway
 }
 
+interface CircuitBreakerConfig {
+  enabled: boolean; // Se o circuit breaker está habilitado
+  timeout?: number; // Timeout para requisições (em ms, default: 10000)
+  errorThresholdPercentage?: number; // Percentual de erros antes de abrir o circuito (default: 50)
+  resetTimeout?: number; // Tempo antes de tentar fechar o circuito novamente (em ms, default: 30000)
+  volumeThreshold?: number; // Número mínimo de requisições antes de avaliar o threshold (default: 10)
+}
+
 interface ServiceConfig {
   baseUrl: string;
   jwt_secret?: string; // Secret específico do serviço
   jwt_enabled?: boolean; // Se JWT está habilitado por padrão para todas as rotas do serviço
   timeout?: number; // Timeout em milissegundos para requisições ao serviço
+  circuit_breaker?: CircuitBreakerConfig; // Configuração do circuit breaker
 }
 
 export class Gateway {
   private services: Record<string, ServiceConfig> = {};
   private config: GatewayConfig = {};
   private axiosInstances: Record<string, AxiosInstance> = {};
+  private circuitBreakers: Record<string, CircuitBreaker> = {};
 
   constructor(private app: Application) {}
 
@@ -71,6 +82,14 @@ export class Gateway {
     this.services = yamlData.services || {};
     this.config = yamlData.gateway || {};
     const routes = yamlData.routes;
+
+    // Inicializar circuit breakers para os serviços que tiverem habilitado
+    Object.keys(this.services).forEach((serviceName) => {
+      const serviceConfig = this.services[serviceName];
+      if (serviceConfig && serviceConfig.circuit_breaker?.enabled) {
+        this.initializeCircuitBreaker(serviceName, serviceConfig);
+      }
+    });
 
     this.applyGlobalSecurity();
 
@@ -154,6 +173,46 @@ export class Gateway {
         });
       }
     });
+  }
+
+  // ⚡ Inicializa Circuit Breaker para um serviço
+  private initializeCircuitBreaker(serviceName: string, serviceConfig: ServiceConfig) {
+    const cbConfig = serviceConfig.circuit_breaker!;
+    
+    const options = {
+      timeout: cbConfig.timeout || 10000, // 10 segundos padrão
+      errorThresholdPercentage: cbConfig.errorThresholdPercentage || 50, // 50% de erros
+      resetTimeout: cbConfig.resetTimeout || 30000, // 30 segundos para tentar fechar
+      volumeThreshold: cbConfig.volumeThreshold || 10, // Mínimo de 10 requisições
+    };
+
+    // Função que será protegida pelo circuit breaker
+    const makeRequest = async (requestConfig: any) => {
+      const axiosInstance = this.getAxiosInstance(serviceName);
+      return await axiosInstance.request(requestConfig);
+    };
+
+    const breaker = new CircuitBreaker(makeRequest, options);
+
+    // Event listeners para logging
+    breaker.on('open', () => {
+      console.warn(`🔴 Circuit Breaker ABERTO para serviço: ${serviceName}`);
+    });
+
+    breaker.on('halfOpen', () => {
+      console.log(`🟡 Circuit Breaker MEIO-ABERTO para serviço: ${serviceName} (testando recuperação)`);
+    });
+
+    breaker.on('close', () => {
+      console.log(`🟢 Circuit Breaker FECHADO para serviço: ${serviceName} (serviço recuperado)`);
+    });
+
+    breaker.on('fallback', (result) => {
+      console.warn(`⚠️  Circuit Breaker fallback acionado para serviço: ${serviceName}`, result);
+    });
+
+    this.circuitBreakers[serviceName] = breaker;
+    console.log(`⚡ Circuit Breaker inicializado para serviço: ${serviceName}`, options);
   }
 
   // 🔒 Aplica segurança global do gateway
@@ -485,16 +544,27 @@ export class Gateway {
           console.log(`⚠️  No authorization header found`);
         }
 
-        // Usa instância axios otimizada do serviço
-        const axiosInstance = this.getAxiosInstance(serviceName);
-
-        const result = await axiosInstance({
+        // Prepara config da requisição
+        const requestConfig = {
           method,
           url: upstreamPath, // Usa path relativo, baseURL já está configurado
           data: req.body,
           params: req.query,
           headers,
-        });
+        };
+
+        // Usa circuit breaker se estiver habilitado para este serviço
+        let result: any;
+        const circuitBreaker = this.circuitBreakers[serviceName];
+        
+        if (circuitBreaker) {
+          console.log(`⚡ Usando Circuit Breaker para: ${serviceName}`);
+          result = await circuitBreaker.fire(requestConfig);
+        } else {
+          // Usa instância axios normal sem circuit breaker
+          const axiosInstance = this.getAxiosInstance(serviceName);
+          result = await axiosInstance(requestConfig);
+        }
         if (result.status >= 200 && result.status < 300) {
           console.log(`✅ Proxy success: ${result.status}`);
         } else {
@@ -512,6 +582,16 @@ export class Gateway {
           status: err.response?.status,
           data: err.response?.data,
         });
+
+        // Tratamento específico para circuit breaker aberto
+        if (err.message && err.message.includes('Breaker is open')) {
+          return res.status(503).json({
+            error: 'Service Unavailable',
+            message: `Circuit breaker is open for ${serviceName}. Service is temporarily unavailable.`,
+            statusCode: 503,
+            timestamp: new Date().toISOString(),
+          });
+        }
 
         // Se a API retornou um erro, propaga a resposta dela
         if (err.response) {
