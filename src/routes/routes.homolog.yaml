@@ -11,6 +11,7 @@ gateway:
 services:
   store-service:
     baseUrl: http://store_catalog_backend-hml.railway.internal:8080
+    timeout: 10000 # Timeout de 10 segundos (padrão: 30000ms = 30s)
 
 routes:
   - path: /store/*
