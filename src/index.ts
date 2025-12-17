@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import express from 'express';
+import compression from 'compression';
 import path from 'path';
 import { Gateway } from './gateway';
 
@@ -10,7 +11,37 @@ console.log('              FRANI API GATEWAY\n');
 console.log('****************************************************\n');
 
 const app = express();
-app.use(express.json());
+
+// Performance optimizations
+app.set('trust proxy', 1); // Trust first proxy
+app.set('x-powered-by', false); // Remove X-Powered-By header
+app.set('etag', false); // Disable ETags (o serviço upstream deve gerenciar isso)
+
+// Compression middleware (comprime respostas > 1kb)
+app.use(compression({
+  threshold: 1024, // Apenas respostas > 1kb
+  level: 6, // Nível de compressão (1-9, 6 é bom balanço)
+  filter: (req, res) => {
+    // Não comprime se o cliente não aceitar
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    // Usa o filtro padrão do compression
+    return compression.filter(req, res);
+  }
+}));
+
+// JSON parser otimizado
+app.use(express.json({
+  limit: '10mb', // Limite de payload
+  strict: true,
+}));
+
+// URL-encoded parser para forms
+app.use(express.urlencoded({
+  extended: true,
+  limit: '10mb',
+}));
 
 const gateway = new Gateway(app);
 const stage = process.env.STAGE || 'local';

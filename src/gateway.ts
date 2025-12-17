@@ -1,6 +1,8 @@
 import fs from 'fs';
 import yaml from 'js-yaml';
-import axios from 'axios';
+import axios, { AxiosInstance } from 'axios';
+import http from 'http';
+import https from 'https';
 import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -8,6 +10,26 @@ import express, { Application, Request, Response, RequestHandler, NextFunction }
 import path from 'path';
 import { ZodSchema, ZodError } from 'zod';
 import { createJWTMiddleware } from './middlewares/jwtMiddleware';
+
+// Cria agentes HTTP/HTTPS otimizados com connection pooling e keepAlive
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 100,
+  maxFreeSockets: 10,
+  timeout: 60000,
+  scheduling: 'lifo', // Last In First Out - melhor para reutilizar conexões quentes
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 100,
+  maxFreeSockets: 10,
+  timeout: 60000,
+  scheduling: 'lifo',
+  rejectUnauthorized: process.env.NODE_ENV === 'production', // Valida SSL apenas em produção
+});
 
 interface RateLimitConfig {
   windowMs: number;
@@ -40,6 +62,7 @@ interface ServiceConfig {
 export class Gateway {
   private services: Record<string, ServiceConfig> = {};
   private config: GatewayConfig = {};
+  private axiosInstances: Record<string, AxiosInstance> = {};
 
   constructor(private app: Application) {}
 
@@ -306,6 +329,67 @@ export class Gateway {
     return this.services[serviceName]?.jwt_secret;
   }
 
+  // Obtém ou cria uma instância axios otimizada para o serviço
+  private getAxiosInstance(serviceName: string): AxiosInstance {
+    // Se já existe, retorna a instância cacheada
+    if (this.axiosInstances[serviceName]) {
+      return this.axiosInstances[serviceName];
+    }
+
+    const service = this.services[serviceName];
+    if (!service) {
+      throw new Error(`Service "${serviceName}" not defined`);
+    }
+
+    // Cria instância otimizada para o serviço
+    const instance = axios.create({
+      baseURL: service.baseUrl,
+      timeout: service.timeout || 30000,
+      httpAgent,
+      httpsAgent,
+      maxRedirects: 5,
+      validateStatus: (status) => status < 600,
+      // Desabilita transformações automáticas para melhor performance
+      transformRequest: axios.defaults.transformRequest,
+      transformResponse: axios.defaults.transformResponse,
+      // Headers padrão otimizados
+      headers: {
+        'Connection': 'keep-alive',
+        'Accept-Encoding': 'gzip, deflate, br',
+      },
+    });
+
+    // Interceptor para logging (apenas em dev)
+    if (process.env.NODE_ENV === 'development') {
+      instance.interceptors.request.use(
+        (config) => {
+          (config as any).metadata = { startTime: Date.now() };
+          return config;
+        },
+        (error) => Promise.reject(error)
+      );
+
+      instance.interceptors.response.use(
+        (response) => {
+          const duration = Date.now() - (response.config as any).metadata?.startTime;
+          console.log(`⚡ ${response.config.method?.toUpperCase()} ${response.config.url} - ${response.status} (${duration}ms)`);
+          return response;
+        },
+        (error) => {
+          if (error.config?.metadata?.startTime) {
+            const duration = Date.now() - error.config.metadata.startTime;
+            console.log(`⚡ ${error.config.method?.toUpperCase()} ${error.config.url} - ERROR (${duration}ms)`);
+          }
+          return Promise.reject(error);
+        }
+      );
+    }
+
+    // Cacheia a instância
+    this.axiosInstances[serviceName] = instance;
+    return instance;
+  }
+
   // 🔁 Proxy para microserviço
   private proxyHandler(serviceName: string, responseMap?: any, targetPath?: string, routePath?: string): RequestHandler {
     const service = this.services[serviceName];
@@ -401,18 +485,15 @@ export class Gateway {
           console.log(`⚠️  No authorization header found`);
         }
 
-        // Configura timeout (padrão: 30 segundos)
-        const timeout = service.timeout || 30000;
+        // Usa instância axios otimizada do serviço
+        const axiosInstance = this.getAxiosInstance(serviceName);
 
-        const result = await axios({
+        const result = await axiosInstance({
           method,
-          url,
+          url: upstreamPath, // Usa path relativo, baseURL já está configurado
           data: req.body,
           params: req.query,
           headers,
-          timeout, // Timeout em milissegundos
-          maxRedirects: 5,
-          validateStatus: (status) => status < 600, // Aceita qualquer status < 600
         });
         if (result.status >= 200 && result.status < 300) {
           console.log(`✅ Proxy success: ${result.status}`);
