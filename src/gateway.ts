@@ -34,6 +34,7 @@ interface ServiceConfig {
   baseUrl: string;
   jwt_secret?: string; // Secret específico do serviço
   jwt_enabled?: boolean; // Se JWT está habilitado por padrão para todas as rotas do serviço
+  timeout?: number; // Timeout em milissegundos para requisições ao serviço
 }
 
 export class Gateway {
@@ -400,12 +401,16 @@ export class Gateway {
           console.log(`⚠️  No authorization header found`);
         }
 
+        // Configura timeout (padrão: 30 segundos)
+        const timeout = service.timeout || 30000;
+
         const result = await axios({
           method,
           url,
           data: req.body,
           params: req.query,
           headers,
+          timeout, // Timeout em milissegundos
           maxRedirects: 5,
           validateStatus: (status) => status < 600, // Aceita qualquer status < 600
         });
@@ -432,11 +437,23 @@ export class Gateway {
           return res.status(err.response.status).json(err.response.data);
         }
 
-        // Se foi erro de rede ou timeout
+        // Tratamento específico para timeout
+        if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+          return res.status(504).json({
+            error: 'Gateway Timeout',
+            message: `Request to ${serviceName} timed out after ${service.timeout || 30000}ms`,
+            statusCode: 504,
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        // Se foi erro de rede
         res.status(502).json({
           error: 'Bad Gateway',
           message: err.message || 'Failed to connect to upstream service',
-          details: err.code || 'UNKNOWN_ERROR'
+          details: err.code || 'UNKNOWN_ERROR',
+          statusCode: 502,
+          timestamp: new Date().toISOString(),
         });
       }
     };

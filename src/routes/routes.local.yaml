@@ -13,12 +13,12 @@ services:
     baseUrl: http://localhost:3333
     jwt_enabled: false # Habilita JWT para TODAS as rotas deste serviço por padrão
     jwt_secret: "secret-local" # Secret específico (opcional, usa o global se não definido)
-
+    timeout: 10000 # Timeout de 10 segundos (padrão: 30000ms = 30s)
 routes:
-  - path: /store/*
-    methods: any
-    service: store-service
-    middlewares: [loggerMiddleware]
+  # - path: /store/*
+  #   methods: any
+  #   service: store-service
+  #   middlewares: [loggerMiddleware]
 
   - path: /auth/sign-in
     methods: POST

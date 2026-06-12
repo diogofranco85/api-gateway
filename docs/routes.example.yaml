@@ -14,14 +14,17 @@ services:
     baseUrl: http://localhost:3333
     jwt_enabled: true # Habilita JWT para TODAS as rotas deste serviço por padrão
     jwt_secret: "secret-especifico-do-store-service" # Secret específico (opcional, usa o global se não definido)
+    timeout: 15000 # Timeout de 15 segundos (padrão: 30000ms = 30s)
 
   auth-service:
     baseUrl: http://localhost:4000
+    timeout: 5000 # Timeout de 5 segundos para autenticação
     # jwt_enabled não definido = JWT desabilitado por padrão
 
   public-service:
     baseUrl: http://localhost:5000
     jwt_enabled: false # Explicitamente desabilitado
+    timeout: 60000 # Timeout de 1 minuto para requisições longas
 
 routes:
   # Rota pública - JWT desabilitado (service não tem jwt_enabled)
